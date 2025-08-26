@@ -1,0 +1,12 @@
+#{"qid": "D102802", "reaction": "He+2 + H 1s \u2192 He+ 5g + H+", "process_types": {"HCX": "Charge Transfer"}, "data_type": "cross section", "refs": {"B32": {"doi": "10.1016/j.adt.2019.05.002"}}, "comment": "State selective electron capture cross sections in He2+ + H collisions using a semiclassical close-coupling approach. Cross sections represent the average values of the results obtained with two basis sets and the uncertainties provide the estimate of convergence of the cross sections", "method": "CC", "columns": [{"name": "E", "units": "eV.u-1"}, {"name": "sigma", "units": "cm2"}], "metadata_version": "M1.0", "time_added": "2022-06-14 07:21:45.772081+00:00"}
+#------------------------------------------------------------------------
+1.000e+03 3.223e-20:8.2e-17
+4.000e+03 3.016e-19:4.3e-18
+9.000e+03 5.929e-19:8.7e-18
+1.600e+04 3.035e-19:1.5e-17
+2.500e+04 1.53e-19:4.9e-17
+3.600e+04 5.977e-20:4.2e-17
+4.900e+04 5.419e-20:7.2e-17
+6.400e+04 3.109e-20:1.2e-16
+8.100e+04 1.556e-20:4.8e-17
+1.000e+05 1.217e-20:6.1e-17
