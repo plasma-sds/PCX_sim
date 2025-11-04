@@ -5,7 +5,7 @@ from scipy.interpolate import interp1d
 
 eV = sc.electron_volt
 mp = sc.proton_mass
-ry = sc.value("Rydberg constant times hc in eV")
+Ae = 5.486e-4
 
 
 def Maxwell_velocity_dist(v, T, m):
@@ -18,40 +18,8 @@ def Relative_to_dirac_dist(v, T, m, v0):
     return 1/(np.sqrt(np.pi)*w*v0)*v*(np.exp(-(v-v0)**2/w**2)-np.exp(-(v+v0)**2/w**2))
 
 
-def calculate_rate(v, sigma, f):
+def calculate_rate_coeff(v, sigma, f):
     return np.trapz(v*sigma*f, v)
-
-
-class janev_1887_H_He_CX:
-
-    def __init__(self, n, m):
-        #if n < 2:
-        #    return ValueError("n must be greater than 1")
-        self.n = n
-        self.m = m
-        self.rcoeff = [0.75,0.8,0.85,0.9,0.95,0.98]
-        if (m == (2*n-1)):
-            self.eth = ry * (1.0/(m*m) - 1.0/((m+1.0)**2))
-        else:
-            self.eth = 0.0
-
-    def cross_section(self, pe):
-
-        #if (pe < self.eth):
-        #    return 0.0
-
-        if (self.m == (2*self.n-1)):
-            if (self.n > 7):
-                const = 1.0
-            else:
-                const = self.rcoeff[self.n-2]
-        else:
-            const = 1.0
-
-        v=3.1623e-03 * np.sqrt(pe)
-        nv = self.n * v
-
-        return 4.69e-16*const * (self.n**4) / (1.0 + 0.8*(nv**0.4) + 2.6*nv ) / 10000
     
 
 class CrossSection:
@@ -100,7 +68,26 @@ class CrossSectionCollection:
         for cs in self.cross_sections:
             if cs.projectile == projectile and cs.target == target and cs.product == product:
                 return cs
+            
+class VelocityDistribution:
 
+    def __init__(self, T, A, v0 = 0):
+        self.T = T
+        self.A = A
+        self.m = A*mp
+        self.v0 = v0
+        self.v_thermal = np.sqrt(2*self.T*eV/self.m)
+
+        self.vmin = max(1e-6, self.v0 - 3 * self.v_thermal)
+        self.vmax = self.v0 + 3 * self.v_thermal
+        self.v_values = np.linspace(self.vmin, self.vmax, 1000)
+        self.E_values = (0.5 * self.m * self.v_values**2)/eV
+
+        if self.v0 == 0:
+            self.f_v = Maxwell_velocity_dist(self.v_values, self.T, self.m)
+        else:
+            self.f_v = Relative_to_dirac_dist(self.v_values, self.T, self.m, v0)
+        self.f_E = self.f_v / self.v_values / self.m * eV
 
 
 class PCX_run:
@@ -145,22 +132,22 @@ class PCX_run:
         self.f_e = Relative_to_dirac_dist(self.v_e, self.T_plasma, mp/1836.152, self.v_He)
 
         #from He+ to He2+
-        self.R_He1_e_ion = calculate_rate(self.v_e, self.cross_sections.get_cross_section('electron', 'He+', 'He2+').cross_section(self.E_v_e), self.f_e)
-        self.R_He1_p_loss = calculate_rate(self.v, self.cross_sections.get_cross_section('H+', 'He+', 'ionHe2+').cross_section(self.E_v), self.f_plasma) + \
-                                            calculate_rate(self.v, self.cross_sections.get_cross_section('H+', 'He+', 'cxHe2+').cross_section(self.E_v), self.f_plasma)
-        self.R_He1_H_ion = calculate_rate(self.v_H, self.cross_sections.get_cross_section('H', 'He+', 'He2+').cross_section(self.E_v_H), self.f_H)
+        self.R_He1_e_ion = calculate_rate_coeff(self.v_e, self.cross_sections.get_cross_section('electron', 'He+', 'He2+').cross_section(self.E_v_e), self.f_e)
+        self.R_He1_p_loss = calculate_rate_coeff(self.v, self.cross_sections.get_cross_section('H+', 'He+', 'ionHe2+').cross_section(self.E_v), self.f_plasma) + \
+                                            calculate_rate_coeff(self.v, self.cross_sections.get_cross_section('H+', 'He+', 'cxHe2+').cross_section(self.E_v), self.f_plasma)
+        self.R_He1_H_ion = calculate_rate_coeff(self.v_H, self.cross_sections.get_cross_section('H', 'He+', 'He2+').cross_section(self.E_v_H), self.f_H)
 
         #from He2+ to He+
-        self.R_He2_H_cx = calculate_rate(self.v_H, self.cross_sections.get_cross_section('H', 'He2+', 'He+').cross_section(self.E_v_H), self.f_H)
+        self.R_He2_H_cx = calculate_rate_coeff(self.v_H, self.cross_sections.get_cross_section('H', 'He2+', 'He+').cross_section(self.E_v_H), self.f_H)
 
         #from He+ to He
-        self.R_He1_H_cx = calculate_rate(self.v_H, self.cross_sections.get_cross_section('H', 'He+', 'He').cross_section(self.E_v_H), self.f_H)
+        self.R_He1_H_cx = calculate_rate_coeff(self.v_H, self.cross_sections.get_cross_section('H', 'He+', 'He').cross_section(self.E_v_H), self.f_H)
 
         #from He to He+
-        self.R_He_e_ion = calculate_rate(self.v_e, self.cross_sections.get_cross_section('electron', 'He', 'He+').cross_section(self.E_v_e), self.f_e)
-        self.R_He_p_loss = calculate_rate(self.v, self.cross_sections.get_cross_section('H+', 'He', 'ionHe+').cross_section(self.E_v), self.f_plasma) + \
-                                            calculate_rate(self.v, self.cross_sections.get_cross_section('H+', 'He', 'cxHe+').cross_section(self.E_v), self.f_plasma)
-        self.R_He_H_ion = calculate_rate(self.v_H, self.cross_sections.get_cross_section('H', 'He', 'He+').cross_section(self.E_v_H), self.f_H)
+        self.R_He_e_ion = calculate_rate_coeff(self.v_e, self.cross_sections.get_cross_section('electron', 'He', 'He+').cross_section(self.E_v_e), self.f_e)
+        self.R_He_p_loss = calculate_rate_coeff(self.v, self.cross_sections.get_cross_section('H+', 'He', 'ionHe+').cross_section(self.E_v), self.f_plasma) + \
+                                            calculate_rate_coeff(self.v, self.cross_sections.get_cross_section('H+', 'He', 'cxHe+').cross_section(self.E_v), self.f_plasma)
+        self.R_He_H_ion = calculate_rate_coeff(self.v_H, self.cross_sections.get_cross_section('H', 'He', 'He+').cross_section(self.E_v_H), self.f_H)
 
         self.n_He2 = np.empty(self.N, dtype=float)
         self.n_He2[0] = n_He0
@@ -191,3 +178,78 @@ class PCX_run:
             self.n_He[i] = min(max(self.n_He[i-1] + dn_He*self.dt, 0), n_He0)
 
 
+class PCX_run_dev:
+
+    def __init__(self, n_plasma, T_plasma, n_H, T_H, E_He, n_He0, cross_sections, dt, N, m_plasma=1, m_H=1):
+        
+        self.n_plasma = n_plasma
+        self.T_plasma = T_plasma
+        self.m_plasma = m_plasma
+        self.n_H = n_H
+        self.T_H = T_H
+        self.m_H = m_H
+        self.E_He = E_He
+        self.cross_sections = cross_sections
+        self.dt = dt
+        self.N = N
+        self.time = np.arange(N) * dt
+
+        self.v_He = np.sqrt(2*E_He*eV/mp/4)
+        self.v_ion = VelocityDistribution(self.T_plasma, self.m_plasma, v0 = self.v_He)
+        self.v_electron = VelocityDistribution(self.T_plasma, Ae, v0 = self.v_He)
+        self.v_cloud = VelocityDistribution(self.T_H, self.m_H, v0 = self.v_He)
+
+        self.calculate_RateCoefficientMatrix()
+        
+        self.dn_He2_mask = np.array([[0, 0, 0, 0],
+                                    [1, 1, 0, 1],
+                                    [0, 0, -1, 0]])
+        
+        self.dn_He1_mask = np.array([[1, 1, 0, 1],
+                                    [-1,-1,-1,-1],
+                                    [0, 0, 1, 0]])
+        
+        self.dn_He_mask = np.array([[-1,-1, 0, -1],
+                                    [0, 0, 1, 0],
+                                    [0, 0, 0, 0]])
+
+        self.n_He = np.empty((3,self.N), dtype=float)
+        self.n_He[:,0] = np.array([0.0, 0.0, n_He0])
+        n_reactants = np.array([self.n_plasma, self.n_plasma, self.n_H, self.n_H])
+
+        for i in range(1, self.N):
+
+            dn_He1 = self.n_He[:,i-1].dot((self.dn_He1_mask*self.rate_coeff_matrix).dot(n_reactants))
+            self.n_He[1, i] = min(max(self.n_He[1,i-1] + dn_He1*self.dt, 0), n_He0)
+
+            dn_He2 = self.n_He[:,i-1].dot((self.dn_He2_mask*self.rate_coeff_matrix).dot(n_reactants))
+            self.n_He[2, i] = min(max(self.n_He[2, i-1] + dn_He2*self.dt, 0), n_He0)
+
+            dn_He = self.n_He[:,i-1].dot((self.dn_He_mask*self.rate_coeff_matrix).dot(n_reactants))
+            self.n_He[0, i] = min(max(self.n_He[0, i-1] + dn_He*self.dt, 0), n_He0)
+
+
+    def calculate_RateCoefficientMatrix(self):
+
+        #from He+ to He2+
+        self.R_He1_e_ion = calculate_rate_coeff(self.v_electron.v_values, self.cross_sections.get_cross_section('electron', 'He+', 'He2+').cross_section(self.v_electron.E_values), self.v_electron.f_v)
+        self.R_He1_p_loss = calculate_rate_coeff(self.v_ion.v_values, self.cross_sections.get_cross_section('H+', 'He+', 'ionHe2+').cross_section(self.v_ion.E_values), self.v_ion.f_v) + \
+                                            calculate_rate_coeff(self.v_ion.v_values, self.cross_sections.get_cross_section('H+', 'He+', 'cxHe2+').cross_section(self.v_ion.E_values), self.v_ion.f_v)
+        self.R_He1_H_ion = calculate_rate_coeff(self.v_cloud.v_values, self.cross_sections.get_cross_section('H', 'He+', 'He2+').cross_section(self.v_cloud.E_values), self.v_cloud.f_v)
+
+        #from He2+ to He+
+        self.R_He2_H_cx = calculate_rate_coeff(self.v_cloud.v_values, self.cross_sections.get_cross_section('H', 'He2+', 'He+').cross_section(self.v_cloud.E_values), self.v_cloud.f_v)
+
+        #from He+ to He
+        self.R_He1_H_cx = calculate_rate_coeff(self.v_cloud.v_values, self.cross_sections.get_cross_section('H', 'He+', 'He').cross_section(self.v_cloud.E_values), self.v_cloud.f_v)
+
+        #from He to He+
+        self.R_He_e_ion = calculate_rate_coeff(self.v_electron.v_values, self.cross_sections.get_cross_section('electron', 'He', 'He+').cross_section(self.v_electron.E_values), self.v_electron.f_v)
+        self.R_He_p_loss = calculate_rate_coeff(self.v_ion.v_values, self.cross_sections.get_cross_section('H+', 'He', 'ionHe+').cross_section(self.v_ion.E_values), self.v_ion.f_v) + \
+                                            calculate_rate_coeff(self.v_ion.v_values, self.cross_sections.get_cross_section('H+', 'He', 'cxHe+').cross_section(self.v_ion.E_values), self.v_ion.f_v)
+        self.R_He_H_ion = calculate_rate_coeff(self.v_cloud.v_values, self.cross_sections.get_cross_section('H', 'He', 'He+').cross_section(self.v_cloud.E_values), self.v_cloud.f_v)
+
+                                            #electron           #ion                #cloud CX     #cloud ionization
+        self.rate_coeff_matrix = np.array([[self.R_He_e_ion, self.R_He_p_loss,   0,               self.R_He_H_ion],  #He
+                                          [self.R_He1_e_ion, self.R_He1_p_loss, self.R_He1_H_cx, self.R_He1_H_ion],  #He1
+                                          [0,                0,                 self.R_He2_H_cx, 0               ]]) #He2
