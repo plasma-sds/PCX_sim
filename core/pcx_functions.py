@@ -180,7 +180,7 @@ class PCX_run:
 
 class PCX_run_dev:
 
-    def __init__(self, n_plasma, T_plasma, n_H, T_H, E_He, n_He0, cross_sections, dt, N, m_plasma=1, m_H=1):
+    def __init__(self, n_plasma, T_plasma, n_H, T_H, E_He, n_He0, cross_sections, z=None, dt=None, N=None, m_plasma=1, m_H=1):
         
         self.n_plasma = n_plasma
         self.T_plasma = T_plasma
@@ -189,12 +189,23 @@ class PCX_run_dev:
         self.T_H = T_H
         self.m_H = m_H
         self.E_He = E_He
-        self.cross_sections = cross_sections
-        self.dt = dt
-        self.N = N
-        self.time = np.arange(N) * dt
-
         self.v_He = np.sqrt(2*E_He*eV/mp/4)
+        self.cross_sections = cross_sections
+        if dt is None and N is None and z is not None:
+            self.dist = z
+            self.dt = (z[1] - z[0]) / self.v_He
+            self.N = len(z)
+            self.time = np.arange(self.N) * self.dt
+        elif z is None and dt is not None and N is not None:
+            self.dt = dt
+            self.N = N
+            self.time = np.arange(N) * self.dt
+            self.dist = self.v_He * self.time
+        else:
+            print('Either provide a spatial grid (z) or number of points (N) with timestep (dt).')
+            return None
+
+        
         self.v_ion = VelocityDistribution(self.T_plasma, self.m_plasma, v0 = self.v_He)
         self.v_electron = VelocityDistribution(self.T_plasma, Ae, v0 = self.v_He)
         self.v_cloud = VelocityDistribution(self.T_H, self.m_H, v0 = self.v_He)
@@ -219,14 +230,15 @@ class PCX_run_dev:
 
         for i in range(1, self.N):
 
-            dn_He1 = self.n_He[:,i-1].dot((self.dn_He1_mask*self.rate_coeff_matrix).dot(n_reactants))
+            dn_He = self.n_He[:,i-1].dot((self.dn_He_mask*self.rate_coeff_matrix).dot(n_reactants[:,i-1]))
+            self.n_He[0, i] = min(max(self.n_He[0, i-1] + dn_He*self.dt, 0), n_He0)
+
+            dn_He1 = self.n_He[:,i-1].dot((self.dn_He1_mask*self.rate_coeff_matrix).dot(n_reactants[:,i-1]))
             self.n_He[1, i] = min(max(self.n_He[1,i-1] + dn_He1*self.dt, 0), n_He0)
 
-            dn_He2 = self.n_He[:,i-1].dot((self.dn_He2_mask*self.rate_coeff_matrix).dot(n_reactants))
+            dn_He2 = self.n_He[:,i-1].dot((self.dn_He2_mask*self.rate_coeff_matrix).dot(n_reactants[:,i-1]))
             self.n_He[2, i] = min(max(self.n_He[2, i-1] + dn_He2*self.dt, 0), n_He0)
 
-            dn_He = self.n_He[:,i-1].dot((self.dn_He_mask*self.rate_coeff_matrix).dot(n_reactants))
-            self.n_He[0, i] = min(max(self.n_He[0, i-1] + dn_He*self.dt, 0), n_He0)
 
 
     def calculate_RateCoefficientMatrix(self):
