@@ -141,16 +141,9 @@ class CrossSectionCollection:
     def collect_cross_sections(self):
 
         # He2+  +  H  -->  He+(n) CX
-        loc = '../cross_sections/levels/'
+        cs = read_tokesi_file('../cross_sections/He2+_H(1s)_CX_gain.txt', 'He2', None, 'Hd')
         for target_ind in range(1,6):
-            files = []
-            for file in os.listdir(loc):
-                if str(target_ind) in file:
-                    files.append(file)
-            cs = CrossSection('H', 'He2+', f'He+{target_ind}', loc+files[0])
-            for file in files[1:]:
-                cs = cs + CrossSection('H', 'He2+', f'He+{target_ind}', loc+file)
-            self.cross_sections[reaction_to_string('He2', None, 'Hd', target_ind)] = cs
+            self.cross_sections[reaction_to_string('He2', None, 'Hd', target_ind)] = cs[reaction_to_string('He2', None, 'Hd', target_ind)]
             self.cross_sections[reaction_to_string('He2', None, 'Hi', target_ind)] = 0.0
             self.cross_sections[reaction_to_string('He2', None, 'p', target_ind)] = 0.0
             self.cross_sections[reaction_to_string('He2', None, 'e', target_ind)] = 0.0
