@@ -27,6 +27,21 @@ def calculate_rate_coeff(v, sigma, f):
 def reaction_to_string(He_ion, He_state, target, target_ind):
     return f'{He_ion}_{He_state}_{target}_{target_ind}'.replace('_None', '')
 
+def oscillator_strength(n1, n2):
+    return 0.42/(n2 - n1)**3
+
+def delta_E(Z, lower_n, upper_n):
+    return Z**2*Ry*(1/lower_n**2 - 1/upper_n**2)
+
+def cross_section_n_scaling(sigma_orig, n1_orig, n2_orig, n1_new, n2_new, z=2):
+    de_orig = delta_E(z, n1_orig, n2_orig)
+    de_new = delta_E(z, n1_new, n2_new)
+    f_orig = oscillator_strength(n1_orig, n2_orig)
+    f_new = oscillator_strength(n1_new, n2_new)
+    new_energies = sigma_orig.energy * (de_new / de_orig)
+    new_values = sigma_orig.cross_section_m2 * (f_new / f_orig) * (de_orig / de_new)**2
+    return CrossSection(sigma_orig.projectile, sigma_orig.target, sigma_orig.product, energy=new_energies, values=new_values)
+
 def deex_from_ex(lower_n, upper_n, amu, ex, Z=2, E=None):
     g1 = lower_n**2
     g2 = upper_n**2
@@ -81,6 +96,7 @@ class CrossSection:
             self.energy = energy
             self.cross_section_m2 = values
 
+        self.cross_section_m2 = np.clip(self.cross_section_m2, a_min=1e-30, a_max=1)
         self._cross_section_interpolator = interp1d(np.log(self.energy), np.log(self.cross_section_m2), fill_value='extrapolate')
 
     def cross_section(self, value):
@@ -165,9 +181,9 @@ class CrossSectionCollection:
                      + CrossSection('H+', 'He+', 'cxHe2+', '../cross_sections/He+_H+_He2+_H.txt'))
         cs_H = CrossSection('H', 'He+', 'He2+', '../cross_sections/He+_H_He2+.txt')
         for target_ind in range(1,6):
-            self.cross_sections[reaction_to_string('He1', target_ind, 'e', target_ind)] = cs_electron
-            self.cross_sections[reaction_to_string('He1', target_ind, 'p', target_ind)] = cs_proton
-            self.cross_sections[reaction_to_string('He1', target_ind, 'Hi', target_ind)] = cs_H
+            self.cross_sections[reaction_to_string('He1', target_ind, 'e', target_ind)] = cross_section_n_scaling(cs_electron, 1, 10, target_ind, 10)
+            self.cross_sections[reaction_to_string('He1', target_ind, 'p', target_ind)] = cross_section_n_scaling(cs_proton, 1, 10, target_ind, 10)
+            self.cross_sections[reaction_to_string('He1', target_ind, 'Hi', target_ind)] = cross_section_n_scaling(cs_H, 1, 10, target_ind, 10)
 
         # He+(n)  +  H  -->  He CX
         cs = CrossSection('H', 'He+', 'He', '../cross_sections/He+_H_He.txt')
@@ -176,74 +192,45 @@ class CrossSectionCollection:
             for i in range(2,6):
                 self.cross_sections[reaction_to_string('He1', target_ind, 'Hd', i)] = 0.0
 
-        # He+(n)  +  [p]  -->  He+(k) (de)excitation
-        cs = CrossSection('x', 'He+', 'He+', energy=np.array([100, 100000]), values=np.array([1e-21, 1e-21]))
-        for He_state in range(1,6):
-            for target_ind in range(1,6):
-                if not He_state == target_ind:
-                    self.cross_sections[reaction_to_string('He1', He_state, 'p', target_ind)] = cs
-                    #self.cross_sections[reaction_to_string('He1', He_state, 'Hi', target_ind)] = cs
-
         # He+(n)  +  H  -->  He+(k) (de)excitation
         loc = '../cross_sections/He_excitation/H/'
-        cs = read_tokesi_file(loc+'He+(1s)_H(1s)_ex.txt', 'He1', 1, 'Hi')
+        cs0 = read_tokesi_file(loc+'He+(1s)_H(1s)_ex.txt', 'He1', 1, 'Hi')
         for He_state in range(1,6):
-            for target_ind in range(1,6):
-                if target_ind > He_state:
-                    deex = False
-                    lower = He_state
-                    upper = target_ind
-                elif target_ind < He_state:
-                    deex = True
-                    lower = target_ind
-                    upper = He_state
+            for target_ind in range(He_state+1,6):
+                reac_name = reaction_to_string('He1', He_state, 'Hi', target_ind)
+                if reac_name in cs0.keys():
+                    cs = cs0[reac_name]
                 else:
-                    continue
-                ex = lower - 1
-                upper -= ex
-                lower = 1
-                tokesi_reac = cs[reaction_to_string('He1', 1, 'Hi', upper)] * 10**ex
-                if deex:
-                    tokesi_reac = deex_from_ex(target_ind, He_state, 1, tokesi_reac, E=10**np.linspace(0,8,50))
-                self.cross_sections[reaction_to_string('He1', He_state, 'Hi', target_ind)] = tokesi_reac
-
-
+                    cs = cross_section_n_scaling(self.cross_sections['He1_1_Hi_2'], 1, 2, He_state, target_ind)
+                cs_deex = deex_from_ex(He_state, target_ind, 1, cs, E=10**np.linspace(0,8,50))
+                self.cross_sections[reac_name] = cs
+                self.cross_sections[reaction_to_string('He1', target_ind, 'Hi', He_state)] = cs_deex
 
         # He+(n)  +  e  -->  He+(k) (de)excitation
         loc = '../cross_sections/He_excitation/electron/'
         for He_state in range(1,6):
-            for target_ind in range(1,6):
-                if not He_state == target_ind:
-                    if target_ind > He_state:
-                        deex = False
-                        lower = He_state
-                        upper = target_ind
-                    else:
-                        deex = True
-                        lower = target_ind
-                        upper = He_state
-                    if lower == 3:
-                        lower = 2
-                        upper -= 1
-                        scaling = 10
-                    elif lower == 4:
-                        lower = 2
-                        upper -= 2
-                        scaling = 100
-                    else:
-                        scaling = 1
+            for target_ind in range(He_state+1,6):
+                if He_state in [1,2]:
                     files = []
                     for file in os.listdir(loc):
                         splitted = file.split('_')
-                        if str(lower) in splitted[0] and str(upper) in splitted[-1]:
+                        if str(He_state) in splitted[0] and str(target_ind) in splitted[-1]:
                             files.append(file)
-                    cs = CrossSection('electron', f'He+{lower}', f'He+{upper}', loc+files[0])
+                    cs = CrossSection('electron', f'He+{He_state}', f'He+{target_ind}', loc+files[0])
                     for file in files[1:]:
-                        cs = cs + CrossSection('electron', f'He+{lower}', f'He+{upper}', loc+file)
-                    cs *= scaling
-                    if deex:
-                        cs = deex_from_ex(target_ind, He_state, electron_amu, cs, E=10**np.linspace(0,8,50))
-                    self.cross_sections[reaction_to_string('He1', He_state, 'e', target_ind)] = cs
+                        cs = cs + CrossSection('electron', f'He+{He_state}', f'He+{target_ind}', loc+file)
+                else:
+                    cs = cross_section_n_scaling(self.cross_sections['He1_2_e_3'], 2, 3, He_state, target_ind)
+                cs_deex = deex_from_ex(He_state, target_ind, electron_amu, cs, E=10**np.linspace(0,8,50))
+                self.cross_sections[reaction_to_string('He1', He_state, 'e', target_ind)] = cs
+                self.cross_sections[reaction_to_string('He1', target_ind, 'e', He_state)] = cs_deex
+
+        # He+(n)  +  p  -->  He+(k) (de)excitation
+        for He_state in range(1,6):
+            for target_ind in range(1,6):
+                if not He_state == target_ind:
+                    self.cross_sections[reaction_to_string('He1', He_state, 'p', target_ind)] = self.cross_sections[reaction_to_string('He1', He_state, 'e', target_ind)]
+                    
 
             
 class VelocityDistribution:
