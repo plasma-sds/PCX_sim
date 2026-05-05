@@ -1,6 +1,7 @@
 import numpy as np
 import scipy.constants as sc
 from scipy.interpolate import interp1d
+from scipy.integrate import odeint
 import os
 import matplotlib.pyplot as plt
 
@@ -78,6 +79,14 @@ def read_tokesi_file(filename, He, He_state, target):
                                                                                          energy=E,
                                                                                          values=n_values[str(target_ind)])
     return return_dict
+
+def calculate_dndt(n_He, t, dn_He, run):
+    n_reactants = run.n_reactants_at_t(t)
+    for j,mask in enumerate(run.reaction_masks):
+        dn_He[j] = n_He.dot((mask*run.rate_coeff_matrix).dot(n_reactants))
+    dn_He[1:-1] += (run.emission_matrix.dot(n_He[1:-1])
+                    - np.sum(run.emission_matrix * n_He[1:-1], axis=0))
+    return dn_He
     
 LOC = os.path.dirname(get_file_path())
 
@@ -269,6 +278,7 @@ class PCX_run:
         self.E_He = E_He
         self.v_He = np.sqrt(2*E_He*eV/mp/4)
         self.cross_sections = cross_sections
+
         if dt is None and N is None and z is not None:
             self.dist = z
             self.dt = (z[1] - z[0]) / self.v_He
@@ -292,20 +302,13 @@ class PCX_run:
         self.get_reaction_masks()
         self.get_emission_matrix()
 
-        self.n_He = np.empty((7,self.N), dtype=float)
-        self.n_He[:, 0] = 0.0
-        self.n_He[-1,0] = n_He0
-        n_reactants = np.vstack((5*[self.n_plasma], 5*[self.n_plasma], 5*[self.n_H], 5*[self.n_H]))
-
-        for i in range(1, self.N):
-
-            dn_He = np.zeros(len(self.reaction_masks), dtype=float)
-            for j,mask in enumerate(self.reaction_masks):
-                dn_He[j] = self.n_He[:,i-1].dot((mask*self.rate_coeff_matrix).dot(n_reactants[:,i-1]))
-            dn_He[1:-1] += (self.emission_matrix.dot(self.n_He[1:-1,i-1])
-                            - np.sum(self.emission_matrix * self.n_He[1:-1,i-1], axis=0))
-
-            self.n_He[:, i] = np.clip(self.n_He[:, i-1] + dn_He*self.dt, a_min=0, a_max=n_He0)
+        self.n_He = np.zeros(len(self.reaction_masks), dtype=float)
+        self.n_He[-1] = n_He0
+        self.n_reactants = np.vstack((5*[self.n_plasma], 5*[self.n_plasma], 5*[self.n_H], 5*[self.n_H]))
+        self.n_reactants_at_t = interp1d(self.time, self.n_reactants, fill_value='extrapolate')
+        dn_He = np.zeros(len(self.reaction_masks), dtype=float)
+    
+        self.n_He = odeint(calculate_dndt, self.n_He, self.time, args=(dn_He, self), printmessg=True).T
 
     def print_values(self):
         for k in self.__dir__()[:13]:
