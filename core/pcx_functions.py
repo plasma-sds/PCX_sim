@@ -267,7 +267,7 @@ class VelocityDistribution:
 
 class PCX_run:
 
-    def __init__(self, n_plasma, T_plasma, n_H, T_H, E_He, n_He0, cross_sections, z=None, dt=None, N=None, m_plasma=1, m_H=1):
+    def __init__(self, n_plasma, T_plasma, n_H, T_H, E_He, n_He0, cross_sections, z=None, dt=None, N=None, m_plasma=1, m_H=1, print_values = True):
         
         self.n_plasma = n_plasma
         self.T_plasma = T_plasma
@@ -292,7 +292,8 @@ class PCX_run:
         else:
             print('Either provide a spatial grid (z) or number of points (N) with timestep (dt).')
             return None
-        self.print_values()
+        if print_values:
+            self.print_values()
 
         self.v_ion = VelocityDistribution(self.T_plasma, self.m_plasma, v0 = self.v_He)
         self.v_electron = VelocityDistribution(self.T_plasma, Ae, v0 = self.v_He)
@@ -309,6 +310,42 @@ class PCX_run:
         dn_He = np.zeros(len(self.reaction_masks), dtype=float)
     
         self.n_He = odeint(calculate_dndt, self.n_He, self.time, args=(dn_He, self), printmessg=True).T
+        self.emission = self.calculate_emission()
+        self.total_emission = np.sum(self.emission)
+
+    def calculate_emission(self):
+        dx = self.dist[1] - self.dist[0]
+        return self.n_He[4] * self.emission_matrix[2,3] * dx  # Ph/m2/s
+
+    def solve_at_t(self, t):
+        i0 = np.argmin(np.abs(self.time - t[0])) - 1
+        t0 = self.time[i0]
+        n0 = self.n_He[:, i0]
+        dn_He = np.zeros(len(self.reaction_masks), dtype=float)
+        return odeint(calculate_dndt, n0, np.insert(t, 0, t0), args=(dn_He, self), printmessg=True)[1:].T
+    
+    def as_dict(self):
+        out = {}
+        out['n_plasma'] = self.n_plasma
+        out['T_plasma'] = self.T_plasma
+        out['m_plasma'] = self.m_plasma
+        out['n_H'] = self.n_H
+        out['T_H'] = self.T_H
+        out['m_H'] = self.m_H
+        out['E_He'] = self.E_He
+        out['v_He'] = self.v_He
+        out['dt'] = self.dt
+        out['time'] = self.time
+        out['dist'] = self.dist
+        out['N'] = self.N
+        out['emission_matrix'] = self.emission_matrix
+        out['reaction_rates'] = self.rate_coeff_matrix
+        out['n_He'] = self.n_He
+        out['emission'] = self.emission
+        out['total_emission'] = self.total_emission
+        return out
+
+
 
     def print_values(self):
         for k in self.__dir__()[:13]:
